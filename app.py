@@ -12,40 +12,59 @@ st.set_page_config(
 )
 
 # ======================================================
-# STYLES
+# RESPONSIVE STYLES
 # ======================================================
 st.markdown("""
 <style>
 html, body, [class*="css"] {
     font-family: Inter, system-ui, -apple-system;
+    background-color: #f8fafc;
 }
+
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 2rem;
+    padding-left: clamp(0.75rem, 3vw, 2rem);
+    padding-right: clamp(0.75rem, 3vw, 2rem);
+}
+
 .card {
     background: #ffffff;
     border-radius: 14px;
-    padding: 18px 22px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.04);
+    padding: clamp(14px, 3vw, 22px);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.05);
+    margin-bottom: 1rem;
 }
+
 .title {
-    font-size: 40px;
+    font-size: clamp(24px, 6vw, 40px);
     font-weight: 700;
     letter-spacing: -0.5px;
+    color: #111827;
 }
+
 .subtitle {
-    font-size: 16px;
+    font-size: clamp(14px, 3.5vw, 16px);
     color: #6b7280;
+    margin-top: 6px;
 }
+
 .metric-label {
+    font-size: clamp(12px, 3vw, 13px);
     color: #6b7280;
-    font-size: 13px;
 }
+
 .metric-value {
-    font-size: 18px;
+    font-size: clamp(15px, 4vw, 18px);
     font-weight: 600;
+    color: #111827;
 }
+
 .section-title {
-    font-size: 22px;
+    font-size: clamp(18px, 4.5vw, 22px);
     font-weight: 600;
     margin-bottom: 6px;
+    color: #111827;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -62,21 +81,18 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("")
-
 # ======================================================
 # METRICS
 # ======================================================
-c1, c2, c3, c4 = st.columns(4)
+cols = st.columns(3)
 
 metrics = [
     ("Indicator", "Wilder RSI (14)"),
     ("Signal Logic", "First Cross, Non-Overlapping"),
     ("Holding Windows", "5 / 30 / 60 Days"),
-    ("Data Source", "Investing.com (Daily)")
 ]
 
-for col, (label, value) in zip([c1, c2, c3, c4], metrics):
+for col, (label, value) in zip(cols, metrics):
     with col:
         st.markdown(f"""
         <div class="card">
@@ -85,8 +101,6 @@ for col, (label, value) in zip([c1, c2, c3, c4], metrics):
         </div>
         """, unsafe_allow_html=True)
 
-st.markdown("")
-
 # ======================================================
 # DATA INPUT
 # ======================================================
@@ -94,37 +108,37 @@ st.markdown("""
 <div class="card">
     <div class="section-title">Data Input</div>
     <div class="subtitle">
-        Upload daily historical data exported from Investing.com
+        Upload daily historical price data (CSV).<br><br>
+        <strong>Recommended source:</strong> Investing.com — Daily timeframe
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader(
+    "",
+    type=["csv"],
+    help="Upload CSV downloaded from Investing.com (Daily)"
+)
+
 if uploaded_file is None:
     st.stop()
 
 # ======================================================
-# LOAD DATA (INVESTING.COM ASSUMPTION)
+# LOAD CSV (INVESTING.COM)
 # ======================================================
 try:
-    if uploaded_file.name.lower().endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    df = pd.read_csv(uploaded_file)
 except Exception:
-    st.error("File could not be read.")
+    st.error("CSV file could not be read.")
     st.stop()
 
 df.columns = df.columns.str.strip().str.lower()
 
-# ======================================================
-# COLUMN DETECTION
-# ======================================================
 date_col = next((c for c in df.columns if "date" in c), None)
 price_col = next((c for c in df.columns if c in ["price", "close"]), None)
 
 if date_col is None or price_col is None:
-    st.error("Required columns not found. Use Investing.com daily export.")
+    st.error("Invalid CSV format. Use Investing.com daily export.")
     st.stop()
 
 # ======================================================
@@ -161,7 +175,7 @@ avg_loss = loss.ewm(alpha=1/RSI_PERIOD, adjust=False).mean()
 df["RSI"] = 100 - (100 / (1 + avg_gain / avg_loss))
 
 # ======================================================
-# BACKTEST (UNCHANGED RESEARCH LOGIC)
+# BACKTEST
 # ======================================================
 THRESHOLDS = [30, 25, 20]
 HOLD_DAYS = [5, 30, 60]
@@ -172,59 +186,51 @@ def backtest(level):
 
     for i in range(1, len(df)):
         crossed = df.loc[i-1, "RSI"] >= level and df.loc[i, "RSI"] < level
-
         if crossed and i > last_exit:
-            entry_price = df.loc[i, price_col]
-
-            trade = {
+            entry = df.loc[i, price_col]
+            row = {
                 "Entry Date": df.loc[i, date_col],
-                "Entry Price": round(entry_price, 2),
+                "Entry Price": round(entry, 2),
                 "RSI": round(df.loc[i, "RSI"], 2),
                 "Signal": f"RSI < {level}"
             }
-
             for d in HOLD_DAYS:
-                trade[f"Return {d}D (%)"] = (
-                    round((df.loc[i + d, price_col] / entry_price - 1) * 100, 2)
+                row[f"Return {d}D (%)"] = (
+                    round((df.loc[i+d, price_col] / entry - 1) * 100, 2)
                     if i + d < len(df) else np.nan
                 )
-
-            trades.append(trade)
+            trades.append(row)
             last_exit = i + max(HOLD_DAYS)
 
     return pd.DataFrame(trades)
 
 all_trades = []
-summary_rows = []
+summary = []
 
 for t in THRESHOLDS:
-    trades = backtest(t)
-    all_trades.append(trades)
+    tr = backtest(t)
+    all_trades.append(tr)
 
-    row = {"RSI <": t, "Trades": len(trades)}
+    s = {"RSI <": t, "Trades": len(tr)}
     for d in HOLD_DAYS:
         col = f"Return {d}D (%)"
-        row[f"Avg {d}D %"] = round(trades[col].mean(), 2)
-        row[f"WinRate {d}D %"] = round((trades[col] > 0).mean() * 100, 2)
-
-    summary_rows.append(row)
+        s[f"Avg {d}D %"] = round(tr[col].mean(), 2)
+        s[f"WinRate {d}D %"] = round((tr[col] > 0).mean() * 100, 2)
+    summary.append(s)
 
 results_df = pd.concat(all_trades, ignore_index=True)
-summary_df = pd.DataFrame(summary_rows)
+summary_df = pd.DataFrame(summary)
 
 if results_df.empty:
     st.warning("No RSI mean-reversion signals detected.")
     st.stop()
 
 # ======================================================
-# FRONTEND OUTPUT (SUMMARY ONLY)
+# OUTPUT
 # ======================================================
 st.markdown("<div class='section-title'>Summary Statistics</div>", unsafe_allow_html=True)
 st.dataframe(summary_df, use_container_width=True)
 
-# ======================================================
-# DOWNLOAD FULL RESULTS
-# ======================================================
 csv = results_df.to_csv(index=False).encode("utf-8")
 st.download_button(
     "Download Full Trade-Level Results",
@@ -236,4 +242,4 @@ st.download_button(
 # FOOTER
 # ======================================================
 st.markdown("---")
-st.caption("Research tool. Daily data sourced from Investing.com.")
+st.caption("Research tool. CSV input recommended from Investing.com.")
