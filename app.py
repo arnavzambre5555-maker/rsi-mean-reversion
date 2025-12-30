@@ -6,227 +6,231 @@ import numpy as np
 # PAGE CONFIG
 # ======================================================
 st.set_page_config(
-    page_title="RSI Mean Reversion Research Tool",
-    page_icon="📉",
-    layout="wide"
+    page_title="RSI Mean Reversion Research",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 # ======================================================
-# CONSTANTS
+# GLOBAL STYLES
 # ======================================================
-RSI_PERIOD = 14
-THRESHOLDS = [30, 25, 20]
-HOLD_DAYS = [5, 30, 60]
-
-# ======================================================
-# STYLING
-# ======================================================
-st.markdown(
-    """
-    <style>
-    .block-container { padding-top: 2rem; }
-    h1 { font-size: 2.4rem; }
-    h2 { margin-top: 2rem; }
-    .metric-box {
-        background-color: #f5f7fa;
-        padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-        text-align: center;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<style>
+html, body, [class*="css"] {
+    font-family: Inter, system-ui, -apple-system;
+}
+.card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 18px 22px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.04);
+}
+.title {
+    font-size: 40px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+.subtitle {
+    font-size: 16px;
+    color: #6b7280;
+}
+.metric-label {
+    color: #6b7280;
+    font-size: 13px;
+}
+.metric-value {
+    font-size: 18px;
+    font-weight: 600;
+}
+.section-title {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ======================================================
 # HEADER
 # ======================================================
-st.title("RSI Mean Reversion Research Tool")
-st.caption(
-    "Quantitative research utility for studying RSI-based mean reversion "
-    "using daily equity price data."
+st.markdown("""
+<div class="card">
+    <div class="title">RSI Mean Reversion Research Tool</div>
+    <div class="subtitle">
+        Quantitative analysis of RSI mean reversion on daily price data
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("")
+
+# ======================================================
+# METRICS
+# ======================================================
+c1, c2, c3, c4 = st.columns(4)
+
+for col, label, value in [
+    (c1, "Indicator", "Wilder RSI (14)"),
+    (c2, "Signal Logic", "First Cross Only"),
+    (c3, "Holding Windows", "30 / 60 Days"),
+    (c4, "Input Formats", "CSV • XLSX • XLS")
+]:
+    with col:
+        st.markdown(f"""
+        <div class="card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("")
+
+# ======================================================
+# FILE INPUT
+# ======================================================
+st.markdown("""
+<div class="card">
+    <div class="section-title">Data Input</div>
+    <div class="subtitle">
+        Upload historical daily data. Edited Excel files are fully supported.
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+uploaded_file = st.file_uploader("", type=["csv", "xlsx", "xls"])
+if uploaded_file is None:
+    st.stop()
+
+# ======================================================
+# LOAD DATA
+# ======================================================
+try:
+    if uploaded_file.name.lower().endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        xls = pd.ExcelFile(uploaded_file)
+        df = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+except Exception:
+    st.error("File could not be read.")
+    st.stop()
+
+# ======================================================
+# NORMALIZATION
+# ======================================================
+df.columns = (
+    df.columns.astype(str)
+    .str.strip()
+    .str.lower()
+    .str.replace(" ", "_")
+    .str.replace(".", "")
+)
+
+date_col = next((c for c in df.columns if "date" in c or "time" in c), None)
+price_col = next((c for c in df.columns if any(k in c for k in ["close", "price", "last"])), None)
+
+if date_col is None or price_col is None:
+    st.error("Required fields not detected.")
+    st.stop()
+
+df[date_col] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
+
+df[price_col] = (
+    df[price_col]
+    .astype(str)
+    .str.replace(",", "", regex=False)
+    .str.replace("₹", "", regex=False)
+    .str.replace("$", "", regex=False)
+)
+
+df[price_col] = pd.to_numeric(df[price_col], errors="coerce")
+
+df = (
+    df.dropna(subset=[date_col, price_col])
+    .sort_values(date_col)
+    .reset_index(drop=True)
 )
 
 # ======================================================
-# LIMITATIONS / NOTICE
+# WILDER RSI
 # ======================================================
-with st.expander("⚠️ Data Requirements & Limitations", expanded=True):
-    st.markdown(
-        """
-**Accepted Data Source**
-- CSV files downloaded from **Investing.com** or **NSE India**
-- Daily timeframe only
-
-**Mandatory Columns (any ONE naming works)**
-- Date column: `Date`
-- Price column: `Close`, `Price`, or `Close Price`
-
-**Not Supported**
-- Bloomberg exports
-- Excel files (`.xlsx`)
-- Intraday data
-- Adjusted corporate action backfills
-
-**Disclaimer**
-This is a **research-only tool**.  
-No investment advice. Results depend entirely on data quality.
-"""
-    )
-
-# ======================================================
-# FILE UPLOAD
-# ======================================================
-file = st.file_uploader(
-    "Upload CSV file",
-    type=["csv"],
-    help="Use CSV from Investing.com or NSE only"
-)
-
-# ======================================================
-# HELPERS
-# ======================================================
-def clean_input(df_raw: pd.DataFrame) -> pd.DataFrame:
-    df_raw.columns = [c.strip().lower() for c in df_raw.columns]
-
-    date_candidates = ["date"]
-    price_candidates = ["close", "price", "close price"]
-
-    date_col = next((c for c in date_candidates if c in df_raw.columns), None)
-    price_col = next((c for c in price_candidates if c in df_raw.columns), None)
-
-    if date_col is None or price_col is None:
-        st.error("Required Date / Close column not found. Use Investing.com or NSE CSV.")
-        st.stop()
-
-    df = pd.DataFrame()
-    df["date"] = pd.to_datetime(df_raw[date_col], dayfirst=True, errors="coerce")
-
-    df["close"] = (
-        df_raw[price_col]
-        .astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace("₹", "", regex=False)
-        .str.strip()
-    )
-
-    df["close"] = pd.to_numeric(df["close"], errors="coerce")
-
-    df = (
-        df.dropna(subset=["date", "close"])
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
-
-    if len(df) < 200:
-        st.error("Dataset too small for meaningful RSI analysis.")
-        st.stop()
-
-    return df
-
-
-def wilder_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+def wilder_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-
+    avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return 100 - (100 / (1 + rs))
 
+df["rsi"] = wilder_rsi(df[price_col])
 
-def backtest(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
-    trades = []
-    last_exit = -1
+# ======================================================
+# BACKTEST — FIRST CROSS ONLY
+# ======================================================
+THRESHOLDS = [30, 25, 20]
+HOLD_DAYS = [30, 60]
 
+signals = []
+
+for level in THRESHOLDS:
+    fired = False
     for i in range(1, len(df)):
-        crossed = df.loc[i - 1, "rsi"] >= threshold and df.loc[i, "rsi"] < threshold
+        if fired:
+            break
+        if df.loc[i-1, "rsi"] >= level and df.loc[i, "rsi"] < level:
+            for h in HOLD_DAYS:
+                if i + h < len(df):
+                    signals.append({
+                        "RSI Level": level,
+                        "Entry Date": df.loc[i, date_col].date(),
+                        "Entry Price": round(df.loc[i, price_col], 2),
+                        "Holding Days": h,
+                        "Exit Price": round(df.loc[i+h, price_col], 2),
+                        "Return %": round(
+                            (df.loc[i+h, price_col] / df.loc[i, price_col] - 1) * 100, 2
+                        )
+                    })
+            fired = True
 
-        if crossed and i > last_exit:
-            entry_price = df.loc[i, "close"]
+results_df = pd.DataFrame(signals)
 
-            trade = {
-                "Entry Date": df.loc[i, "date"],
-                "Entry Price": round(entry_price, 2),
-                "RSI": round(df.loc[i, "rsi"], 2),
-                "Signal": f"RSI < {threshold}",
-            }
-
-            for d in HOLD_DAYS:
-                if i + d < len(df):
-                    trade[f"Return {d}D (%)"] = round(
-                        (df.loc[i + d, "close"] / entry_price - 1) * 100, 2
-                    )
-                else:
-                    trade[f"Return {d}D (%)"] = np.nan
-
-            trades.append(trade)
-            last_exit = i + max(HOLD_DAYS)
-
-    return pd.DataFrame(trades)
-
+if results_df.empty:
+    st.warning("No valid RSI mean-reversion signals detected.")
+    st.stop()
 
 # ======================================================
-# MAIN LOGIC
+# OUTPUT
 # ======================================================
-if file is not None:
-    df_raw = pd.read_csv(file)
-    df = clean_input(df_raw)
-    df["rsi"] = wilder_rsi(df["close"], RSI_PERIOD)
+st.markdown("<div class='section-title'>Trade Signals</div>", unsafe_allow_html=True)
+st.dataframe(results_df, use_container_width=True)
 
-    all_trades = []
-    summary_rows = []
-
-    for t in THRESHOLDS:
-        trades = backtest(df, t)
-
-        if not trades.empty:
-            all_trades.append(trades)
-
-            row = {
-                "RSI Threshold": f"< {t}",
-                "Trades": len(trades),
-            }
-
-            for d in HOLD_DAYS:
-                col = f"Return {d}D (%)"
-                row[f"Avg {d}D %"] = round(trades[col].mean(), 2)
-                row[f"Win % {d}D"] = round((trades[col] > 0).mean() * 100, 2)
-
-            summary_rows.append(row)
-
-    if not all_trades:
-        st.warning("No RSI mean-reversion signals detected in this dataset.")
-        st.stop()
-
-    results_df = pd.concat(all_trades).reset_index(drop=True)
-    summary_df = pd.DataFrame(summary_rows)
-
-    # ==================================================
-    # OUTPUT
-    # ==================================================
-    st.subheader("📌 Trade Signals")
-    st.dataframe(results_df, use_container_width=True)
-
-    st.subheader("📊 Summary Statistics")
-    st.dataframe(summary_df, use_container_width=True)
-
-    csv = results_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "Download Results CSV",
-        data=csv,
-        file_name="rsi_mean_reversion_results.csv",
-        mime="text/csv",
+summary_df = (
+    results_df
+    .groupby(["RSI Level", "Holding Days"])
+    .agg(
+        Trades=("Return %", "count"),
+        Avg_Return=("Return %", "mean"),
+        Win_Rate=("Return %", lambda x: (x > 0).mean() * 100)
     )
+    .round(2)
+    .reset_index()
+)
+
+st.markdown("<div class='section-title'>Summary Statistics</div>", unsafe_allow_html=True)
+st.dataframe(summary_df, use_container_width=True)
+
+# ======================================================
+# EXPORT
+# ======================================================
+csv = results_df.to_csv(index=False).encode("utf-8")
+st.download_button(
+    "Download Results CSV",
+    data=csv,
+    file_name="rsi_mean_reversion_results.csv"
+)
 
 # ======================================================
 # FOOTER
 # ======================================================
 st.markdown("---")
-st.caption(
-    "Educational quantitative research tool. "
-    "No investment advice. Use only clean daily CSV data."
-)
+st.caption("Quantitative research tool. Excel and CSV inputs supported.")
