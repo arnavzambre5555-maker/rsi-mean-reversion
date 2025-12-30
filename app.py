@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# RESPONSIVE STYLES
+# GLOBAL + RESPONSIVE STYLES
 # ======================================================
 st.markdown("""
 <style>
@@ -21,6 +21,12 @@ html, body, [class*="css"] {
     background-color: #f8fafc;
 }
 
+/* Remove Streamlit uploader helper text (CSV, XLSX, etc.) */
+[data-testid="stFileUploader"] small {
+    display: none !important;
+}
+
+/* Layout */
 .block-container {
     padding-top: 1rem;
     padding-bottom: 2rem;
@@ -28,6 +34,7 @@ html, body, [class*="css"] {
     padding-right: clamp(0.75rem, 3vw, 2rem);
 }
 
+/* Cards */
 .card {
     background: #ffffff;
     border-radius: 14px;
@@ -36,6 +43,7 @@ html, body, [class*="css"] {
     margin-bottom: 1rem;
 }
 
+/* Typography */
 .title {
     font-size: clamp(24px, 6vw, 40px);
     font-weight: 700;
@@ -82,9 +90,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================================================
-# METRICS
+# METRICS (ONLY 3 — NO INPUT FORMAT CARD)
 # ======================================================
-cols = st.columns(3)
+c1, c2, c3 = st.columns(3)
 
 metrics = [
     ("Indicator", "Wilder RSI (14)"),
@@ -92,7 +100,7 @@ metrics = [
     ("Holding Windows", "5 / 30 / 60 Days"),
 ]
 
-for col, (label, value) in zip(cols, metrics):
+for col, (label, value) in zip([c1, c2, c3], metrics):
     with col:
         st.markdown(f"""
         <div class="card">
@@ -108,17 +116,13 @@ st.markdown("""
 <div class="card">
     <div class="section-title">Data Input</div>
     <div class="subtitle">
-        Upload daily historical price data (CSV).<br><br>
-        <strong>Recommended source:</strong> Investing.com — Daily timeframe
+        Upload daily historical price data.<br><br>
+        <strong>Recommended source:</strong> Investing.com (Daily timeframe)
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader(
-    "",
-    type=["csv"],
-    help="Upload CSV downloaded from Investing.com (Daily)"
-)
+uploaded_file = st.file_uploader("", type=["csv"])
 
 if uploaded_file is None:
     st.stop()
@@ -145,13 +149,11 @@ if date_col is None or price_col is None:
 # CLEAN DATA
 # ======================================================
 df[date_col] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
-
 df[price_col] = (
     df[price_col]
     .astype(str)
     .str.replace(",", "", regex=False)
 )
-
 df[price_col] = pd.to_numeric(df[price_col], errors="coerce")
 
 df = (
@@ -242,4 +244,4 @@ st.download_button(
 # FOOTER
 # ======================================================
 st.markdown("---")
-st.caption("Research tool. CSV input recommended from Investing.com.")
+st.caption("Research tool. Daily CSV data recommended from Investing.com.")
